@@ -1,0 +1,113 @@
+import os
+
+import httpx
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+load_dotenv()
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+SYSTEM_PROMPT = (
+    "Você é um chatbot especializado em livros. Conversa sobre livros, dá "
+    "dicas de leitura personalizadas e ajuda o usuário a descobrir novas "
+    "obras. Responda sempre em português do Brasil, de forma amigável e "
+    "objetiva."
+)
+
+app = FastAPI(title="Chatbot de Livros")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+class Message(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    history: list[Message] = []
+
+
+class ChatResponse(BaseModel):
+    reply: str
+
+
+class ResumoRequest(BaseModel):
+    titulo: str
+    autor: str | None = None
+
+
+class ResumoResponse(BaseModel):
+    resumo: str
+
+
+async def call_openrouter(messages: list[dict]) -> str:
+    if not OPENROUTER_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="OPENROUTER_API_KEY não configurada no .env",
+        )
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {"model": OPENROUTER_MODEL, "messages": messages}
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        try:
+            response = await client.post(OPENROUTER_URL, headers=headers, json=payload)
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail=f"Erro ao conectar ao OpenRouter: {exc}")
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"OpenRouter retornou erro: {response.text}")
+
+    data = response.json()
+    return data["choices"][0]["message"]["content"]
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages += [{"role": m.role, "content": m.content} for m in request.history]
+    messages.append({"role": "user", "content": request.message})
+
+    reply = await call_openrouter(messages)
+    return ChatResponse(reply=reply)
+
+
+@app.post("/resumo", response_model=ResumoResponse)
+async def resumo(request: ResumoRequest):
+    referencia = request.titulo
+    if request.autor:
+        referencia += f" de {request.autor}"
+
+    prompt = (
+        f"Faça um resumo do livro '{referencia}'. Inclua: sinopse, temas "
+        "principais e para qual tipo de leitor o livro é indicado. Se não "
+        "conhecer a obra, diga isso claramente em vez de inventar."
+    )
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+
+    texto = await call_openrouter(messages)
+    return ResumoResponse(resumo=texto)
+
+
+@app.get("/")
+async def health():
+    return {"status": "ok"}
