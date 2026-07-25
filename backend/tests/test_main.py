@@ -73,11 +73,13 @@ def test_chat_builds_messages_with_system_prompt_and_history(monkeypatch):
 
     assert response.status_code == 200
     messages = captured["messages"]
-    assert len(messages) == 4
+    n_few_shot = len(main.FEW_SHOT_EXAMPLES)
+    assert len(messages) == 1 + n_few_shot + 3
     assert messages[0] == {"role": "system", "content": main.SYSTEM_PROMPT}
-    assert messages[1] == {"role": "user", "content": "oi"}
-    assert messages[2] == {"role": "assistant", "content": "ola"}
-    assert messages[3] == {"role": "user", "content": "e ai?"}
+    assert messages[1 : 1 + n_few_shot] == main.FEW_SHOT_EXAMPLES
+    assert messages[1 + n_few_shot] == {"role": "user", "content": "oi"}
+    assert messages[2 + n_few_shot] == {"role": "assistant", "content": "ola"}
+    assert messages[3 + n_few_shot] == {"role": "user", "content": "e ai?"}
 
 
 def test_chat_missing_message_returns_422():
