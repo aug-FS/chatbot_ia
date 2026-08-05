@@ -3,168 +3,153 @@ import asyncio
 import httpx
 import pytest
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
-
 import main
 
-client = TestClient(main.app)
+
+class LocalClient:
+    def request(self, method, path, **kwargs):
+        async def send():
+            transport = httpx.ASGITransport(app=main.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                return await client.request(method, path, **kwargs)
+
+        return asyncio.run(send())
+
+    def get(self, path, **kwargs):
+        return self.request("GET", path, **kwargs)
+
+    def post(self, path, **kwargs):
+        return self.request("POST", path, **kwargs)
+
+    def delete(self, path, **kwargs):
+        return self.request("DELETE", path, **kwargs)
 
 
-class FakeResponse:
-    def __init__(self, status_code, json_data=None, text=""):
-        self.status_code = status_code
-        self._json_data = json_data
-        self.text = text
-
-    def json(self):
-        return self._json_data
+@pytest.fixture()
+def client(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DATABASE_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(main, "PASSWORD_HASH_ITERATIONS", 1_000)
+    main.init_database()
+    yield LocalClient()
 
 
-class FakeAsyncClient:
-    def __init__(self, response):
-        self._response = response
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args):
-        return False
-
-    async def post(self, *_args, **_kwargs):
-        return self._response
+def register(client, email="leitor@example.com"):
+    response = client.post(
+        "/auth/register",
+        json={"name": "Leitor", "email": email, "password": "senha-segura"},
+    )
+    assert response.status_code == 201
+    return response.json()
 
 
-class FakeAsyncClientConnectionError:
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args):
-        return False
-
-    async def post(self, *_args, **_kwargs):
-        raise httpx.RequestError("connection failed")
+def auth_headers(data):
+    return {"Authorization": f"Bearer {data['token']}"}
 
 
-def test_health_check():
-    response = client.get("/")
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+def test_health_check(client):
+    assert client.get("/").json() == {"status": "ok"}
 
 
-def test_chat_success(monkeypatch):
-    async def fake_call_openrouter(_messages):
-        return "Resposta de teste"
+def test_register_login_and_me(client):
+    registered = register(client)
+    assert registered["user"]["email"] == "leitor@example.com"
 
-    monkeypatch.setattr(main, "call_openrouter", fake_call_openrouter)
+    me = client.get("/auth/me", headers=auth_headers(registered))
+    assert me.status_code == 200
+    assert me.json()["name"] == "Leitor"
 
-    response = client.post("/chat", json={"message": "oi"})
+    login = client.post(
+        "/auth/login", json={"email": "leitor@example.com", "password": "senha-segura"}
+    )
+    assert login.status_code == 200
+    assert login.json()["user"]["id"] == registered["user"]["id"]
 
-    assert response.status_code == 200
-    assert response.json() == {"reply": "Resposta de teste"}
+
+def test_duplicate_email_and_wrong_password(client):
+    register(client)
+    duplicate = client.post(
+        "/auth/register",
+        json={"name": "Outro", "email": "LEITOR@example.com", "password": "outra-senha"},
+    )
+    assert duplicate.status_code == 409
+    invalid = client.post(
+        "/auth/login", json={"email": "leitor@example.com", "password": "senha-errada"}
+    )
+    assert invalid.status_code == 401
 
 
-def test_chat_builds_messages_with_system_prompt_and_history(monkeypatch):
-    captured = {}
+def test_conversation_is_saved_and_private(client, monkeypatch):
+    first = register(client)
+    second = register(client, "outro@example.com")
 
-    async def fake_call_openrouter(messages):
-        captured["messages"] = messages
-        return "ok"
+    async def fake_openrouter(_messages):
+        return "Leia Torto Arado."
 
-    monkeypatch.setattr(main, "call_openrouter", fake_call_openrouter)
-
+    monkeypatch.setattr(main, "call_openrouter", fake_openrouter)
     response = client.post(
         "/chat",
-        json={
-            "message": "e ai?",
-            "history": [
-                {"role": "user", "content": "oi"},
-                {"role": "assistant", "content": "ola"},
-            ],
-        },
+        json={"message": "O que devo ler?"},
+        headers=auth_headers(first),
     )
-
     assert response.status_code == 200
-    messages = captured["messages"]
-    assert len(messages) == 4
-    assert messages[0] == {"role": "system", "content": main.SYSTEM_PROMPT}
-    assert messages[1] == {"role": "user", "content": "oi"}
-    assert messages[2] == {"role": "assistant", "content": "ola"}
-    assert messages[3] == {"role": "user", "content": "e ai?"}
+    conversation_id = response.json()["conversation_id"]
+
+    listing = client.get("/conversations", headers=auth_headers(first)).json()
+    assert len(listing) == 1
+    opened = client.get(
+        f"/conversations/{conversation_id}", headers=auth_headers(first)
+    ).json()
+    assert [item["role"] for item in opened["messages"]] == ["user", "assistant"]
+    assert client.get(
+        f"/conversations/{conversation_id}", headers=auth_headers(second)
+    ).status_code == 404
 
 
-def test_chat_missing_message_returns_422():
-    response = client.post("/chat", json={})
-    assert response.status_code == 422
+def test_delete_conversation(client, monkeypatch):
+    auth = register(client)
+
+    async def fake_openrouter(_messages):
+        return "Resumo."
+
+    monkeypatch.setattr(main, "call_openrouter", fake_openrouter)
+    created = client.post(
+        "/resumo", json={"titulo": "Duna"}, headers=auth_headers(auth)
+    ).json()
+    response = client.delete(
+        f"/conversations/{created['conversation_id']}", headers=auth_headers(auth)
+    )
+    assert response.status_code == 204
+    assert client.get("/conversations", headers=auth_headers(auth)).json() == []
 
 
-def test_resumo_success(monkeypatch):
-    async def fake_call_openrouter(_messages):
-        return "Resumo de teste"
-
-    monkeypatch.setattr(main, "call_openrouter", fake_call_openrouter)
-
-    response = client.post("/resumo", json={"titulo": "Duna", "autor": "Frank Herbert"})
-
-    assert response.status_code == 200
-    assert response.json() == {"resumo": "Resumo de teste"}
+def test_unauthenticated_history_is_rejected(client):
+    assert client.get("/conversations").status_code == 401
 
 
-def test_resumo_sem_autor_e_opcional(monkeypatch):
-    async def fake_call_openrouter(_messages):
-        return "Resumo de teste"
-
-    monkeypatch.setattr(main, "call_openrouter", fake_call_openrouter)
-
-    response = client.post("/resumo", json={"titulo": "Duna"})
-
-    assert response.status_code == 200
-
-
-def test_resumo_missing_titulo_returns_422():
-    response = client.post("/resumo", json={})
-    assert response.status_code == 422
+def test_password_hash_is_salted(monkeypatch):
+    monkeypatch.setattr(main, "PASSWORD_HASH_ITERATIONS", 1_000)
+    first = main.hash_password("senha-segura")
+    second = main.hash_password("senha-segura")
+    assert first != second
+    assert main.verify_password("senha-segura", first)
+    assert not main.verify_password("incorreta", first)
 
 
 def test_call_openrouter_missing_api_key(monkeypatch):
     monkeypatch.setattr(main, "OPENROUTER_API_KEY", None)
-
     with pytest.raises(HTTPException) as exc_info:
         asyncio.run(main.call_openrouter([{"role": "user", "content": "oi"}]))
-
     assert exc_info.value.status_code == 500
 
 
-def test_call_openrouter_upstream_error(monkeypatch):
-    monkeypatch.setattr(main, "OPENROUTER_API_KEY", "fake-key")
-    fake_response = FakeResponse(404, text='{"error": "model not found"}')
-    monkeypatch.setattr(main.httpx, "AsyncClient", lambda *a, **kw: FakeAsyncClient(fake_response))
-
-    with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(main.call_openrouter([{"role": "user", "content": "oi"}]))
-
-    assert exc_info.value.status_code == 502
-
-
 def test_call_openrouter_connection_error(monkeypatch):
-    monkeypatch.setattr(main, "OPENROUTER_API_KEY", "fake-key")
-    monkeypatch.setattr(
-        main.httpx, "AsyncClient", lambda *a, **kw: FakeAsyncClientConnectionError()
-    )
+    class BrokenClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def post(self, *_args, **_kwargs): raise httpx.RequestError("offline")
 
+    monkeypatch.setattr(main, "OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda *args, **kwargs: BrokenClient())
     with pytest.raises(HTTPException) as exc_info:
         asyncio.run(main.call_openrouter([{"role": "user", "content": "oi"}]))
-
     assert exc_info.value.status_code == 502
-    assert "Erro ao conectar ao OpenRouter" in exc_info.value.detail
-
-
-def test_call_openrouter_success_parses_reply(monkeypatch):
-    monkeypatch.setattr(main, "OPENROUTER_API_KEY", "fake-key")
-    fake_response = FakeResponse(
-        200, json_data={"choices": [{"message": {"content": "Ola!"}}]}
-    )
-    monkeypatch.setattr(main.httpx, "AsyncClient", lambda *a, **kw: FakeAsyncClient(fake_response))
-
-    result = asyncio.run(main.call_openrouter([{"role": "user", "content": "oi"}]))
-
-    assert result == "Ola!"

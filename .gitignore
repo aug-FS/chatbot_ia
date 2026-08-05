@@ -23,6 +23,10 @@ dist/
 .ruff_cache/
 .coverage
 htmlcov/
+data/
+*.db
+*.db-shm
+*.db-wal
 
 # Jupyter
 .ipynb_checkpoints/
