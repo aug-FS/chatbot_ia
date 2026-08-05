@@ -1,0 +1,15 @@
+# Decisões do projeto
+
+O Entrelinhas nasceu como uma oportunidade de aprender, na prática, como diferentes tecnologias podem trabalhar juntas na construção de uma aplicação completa. Nosso principal objetivo foi estudar a integração entre React no frontend e Python no backend, entendendo não apenas cada tecnologia de forma isolada, mas também como ocorre a comunicação entre as diferentes camadas do sistema.
+
+No frontend, utilizamos React com TypeScript para desenvolver uma interface dinâmica, organizada e dividida em componentes reutilizáveis. Tecnicamente, aprendemos a trabalhar melhor com tipagem de propriedades, estados, eventos, formulários, autenticação, histórico de conversas e estados de carregamento. Também aprofundamos o uso de requisições assíncronas para consumir a API, atualizar a interface sem recarregar a página e tratar respostas de sucesso ou erro retornadas pelo backend.
+
+Na parte visual, experimentamos a proposta do shadcn/ui, criando componentes como botões, campos de texto e áreas de texto. Isso nos permitiu compreender melhor o uso de variantes, composição de classes, personalização de componentes e reutilização de código. Também trabalhamos com recursos como forwardRef, clsx, tailwind-merge e os ícones do lucide-react.
+
+No backend, utilizamos Python com FastAPI. Aprendemos a organizar rotas, serviços, modelos e responsabilidades, além de validar os dados recebidos nas requisições. Também trabalhamos com autenticação, proteção de rotas, controle de sessões, tratamento de exceções e documentação automática dos endpoints. Outro aprendizado importante foi a integração com a OpenRouter, desde o envio das mensagens até o tratamento das respostas do modelo de inteligência artificial.
+
+Para a persistência, utilizamos SQLite, o que nos permitiu praticar a criação de tabelas, relacionamentos, consultas, inserções, atualizações e recuperação de dados. Também entendemos melhor a necessidade de manter a consistência entre usuários, conversas e mensagens. Em uma futura evolução, o banco poderá ser migrado para PostgreSQL, permitindo maior concorrência e escalabilidade.
+
+Um dos pontos mais importantes foi a troca de conhecimentos dentro da equipe. Como o Matheus já possuía mais experiência com Python, ele nos ajudou principalmente na construção e organização do backend. Em um projeto anterior, aconteceu o contrário: nós tínhamos mais experiência com Laravel e pudemos ajudá-lo. Essa troca permitiu que todos evoluíssem tecnicamente, comparando abordagens, padrões e formas diferentes de resolver problemas.
+
+Ao final, aprendemos de maneira mais aprofundada como integrar frontend, backend, banco de dados e inteligência artificial. Também desenvolvemos uma visão mais completa sobre separação de responsabilidades, estruturação de APIs, segurança, persistência, tratamento de erros e manutenção de uma aplicação full stack.
