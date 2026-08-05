@@ -1,5 +1,6 @@
 import asyncio
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -26,11 +27,22 @@ class FakeAsyncClient:
     async def __aenter__(self):
         return self
 
-    async def __aexit__(self, *args):
+    async def __aexit__(self, *_args):
         return False
 
-    async def post(self, *args, **kwargs):
+    async def post(self, *_args, **_kwargs):
         return self._response
+
+
+class FakeAsyncClientConnectionError:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+    async def post(self, *_args, **_kwargs):
+        raise httpx.RequestError("connection failed")
 
 
 def test_health_check():
@@ -40,7 +52,7 @@ def test_health_check():
 
 
 def test_chat_success(monkeypatch):
-    async def fake_call_openrouter(messages):
+    async def fake_call_openrouter(_messages):
         return "Resposta de teste"
 
     monkeypatch.setattr(main, "call_openrouter", fake_call_openrouter)
@@ -86,7 +98,7 @@ def test_chat_missing_message_returns_422():
 
 
 def test_resumo_success(monkeypatch):
-    async def fake_call_openrouter(messages):
+    async def fake_call_openrouter(_messages):
         return "Resumo de teste"
 
     monkeypatch.setattr(main, "call_openrouter", fake_call_openrouter)
@@ -98,7 +110,7 @@ def test_resumo_success(monkeypatch):
 
 
 def test_resumo_sem_autor_e_opcional(monkeypatch):
-    async def fake_call_openrouter(messages):
+    async def fake_call_openrouter(_messages):
         return "Resumo de teste"
 
     monkeypatch.setattr(main, "call_openrouter", fake_call_openrouter)
@@ -131,6 +143,19 @@ def test_call_openrouter_upstream_error(monkeypatch):
         asyncio.run(main.call_openrouter([{"role": "user", "content": "oi"}]))
 
     assert exc_info.value.status_code == 502
+
+
+def test_call_openrouter_connection_error(monkeypatch):
+    monkeypatch.setattr(main, "OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setattr(
+        main.httpx, "AsyncClient", lambda *a, **kw: FakeAsyncClientConnectionError()
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(main.call_openrouter([{"role": "user", "content": "oi"}]))
+
+    assert exc_info.value.status_code == 502
+    assert "Erro ao conectar ao OpenRouter" in exc_info.value.detail
 
 
 def test_call_openrouter_success_parses_reply(monkeypatch):

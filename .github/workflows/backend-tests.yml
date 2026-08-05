@@ -31,10 +31,74 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Run tests with coverage
-        run: pytest tests/ -v --cov=. --cov-report=term-missing --cov-report=xml
+        run: |
+          pytest tests/ -v --cov=. --cov-report=term-missing --cov-report=xml --junitxml=test-results.xml
+
+      - name: Run pylint
+        run: |
+          pylint main.py conftest.py tests/ | tee pylint-report.txt
 
       - name: Upload coverage report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: backend/coverage.xml
+
+      - name: Generate quality report
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import xml.etree.ElementTree as ET
+
+          tests = ET.parse("test-results.xml").getroot()
+          suite = tests.find("testsuite") if tests.tag == "testsuites" else tests
+          total = int(suite.get("tests", 0))
+          failures = int(suite.get("failures", 0))
+          errors = int(suite.get("errors", 0))
+          skipped = int(suite.get("skipped", 0))
+          passed = total - failures - errors - skipped
+          time = float(suite.get("time", 0))
+
+          coverage = float(ET.parse("coverage.xml").getroot().get("line-rate", 0)) * 100
+
+          pylint_output = open("pylint-report.txt", encoding="utf-8").read()
+          match = re.search(r"rated at ([\d.]+)/10", pylint_output)
+          pylint_score = match.group(1) if match else "N/A"
+
+          lines = [
+              "## Relatório de Qualidade",
+              "",
+              "### Testes",
+              "| Total | Passou | Falhou | Erros | Ignorados | Tempo |",
+              "|---|---|---|---|---|---|",
+              f"| {total} | {passed} | {failures} | {errors} | {skipped} | {time:.2f}s |",
+              "",
+              "### Cobertura de código",
+              f"**{coverage:.1f}%**",
+              "",
+              "### Pylint",
+              f"**{pylint_score}/10**",
+              "",
+          ]
+          report = "\n".join(lines)
+
+          with open("quality-report.md", "w", encoding="utf-8") as f:
+              f.write(report)
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as f:
+                  f.write(report)
+
+          print(report)
+          PY
+
+      - name: Upload quality report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-report
+          path: backend/quality-report.md
