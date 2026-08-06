@@ -131,34 +131,6 @@ pytest backend/tests -q
 cd frontend && npm run build
 ```
 
-## Caminho simples para produção
-
-Para a primeira versão, a opção mais simples é:
-
-1. publicar o frontend estático na Vercel, Netlify ou Cloudflare Pages;
-2. publicar o FastAPI no Railway, Render ou Fly.io;
-3. anexar um volume persistente ao backend e apontar `DATABASE_PATH` para ele;
-4. definir `APP_ENV=production`, um `APP_SECRET_KEY` forte, a chave OpenRouter e `CORS_ORIGINS` com o domínio real;
-5. gerar o frontend com `VITE_API_URL=https://api.seudominio.com`.
-
-Com SQLite, execute apenas uma instância do backend. Isso é adequado para o lançamento inicial e baixo volume. Quando precisar de múltiplas instâncias, alta disponibilidade ou mais concorrência, migre a persistência para PostgreSQL antes de escalar horizontalmente.
-
-Comando de produção do backend:
-
-```bash
-uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}
-```
-
-Build do frontend:
-
-```bash
-cd frontend
-npm ci
-npm run build
-```
-
-Publique o conteúdo de `frontend/dist` no provedor estático.
-
 ## Segurança
 
 - Não versione `.env`, bancos, tokens ou chaves.
